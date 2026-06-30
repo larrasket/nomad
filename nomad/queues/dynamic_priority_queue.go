@@ -126,6 +126,10 @@ func NewDynamicPriorityQueue(broker Broker, qconf *structs.BatchQueue, conf *str
 	}
 }
 
+func (d *DynamicPriorityQueue) Type() structs.BatchQueueType {
+	return structs.BatchQueueTypeDynamic
+}
+
 func (d *DynamicPriorityQueue) Start(ctx context.Context) error {
 	go d.runProducer(ctx)
 	go d.runConsumer(ctx)
@@ -611,18 +615,17 @@ func (d *DynamicPriorityQueue) isSchedulingComplete(workload *Workload) (bool, e
 	return false, nil
 }
 
-func (d *DynamicPriorityQueue) Jobs(namespaces map[string]bool) structs.QueueJobsResponse {
+func (d *DynamicPriorityQueue) Jobs() *WorkloadIter {
 	d.qMux.Lock()
+	sortedWorkloads := d.queue.Slice()
 	defer d.qMux.Unlock()
 
-	workloads := []structs.DynamicPriorityWorkload{}
-	for pos, w := range d.queue.Slice() {
-		if (namespaces != nil) && !namespaces[w.eval.Namespace] || w.waitOnRestore {
-			continue
-		}
-		workloads = append(workloads, structs.DynamicPriorityWorkload{
+	workloads := []structs.QueueWorkload{}
+	for pos, w := range sortedWorkloads {
+		workloads = append(workloads, &structs.DynamicPriorityWorkload{
 			JobID:            w.eval.JobID,
 			Tenant:           string(w.tid),
+			Namespace:        w.eval.Namespace,
 			Position:         pos + 1,
 			AdjustedPriority: w.priority,
 			BasePriority:     w.eval.Priority,
@@ -632,9 +635,9 @@ func (d *DynamicPriorityQueue) Jobs(namespaces map[string]bool) structs.QueueJob
 			CreatedAt:        w.eval.CreateTime,
 		})
 	}
-	return structs.QueueJobsResponse{
-		Type:      structs.BatchQueueTypeDynamic,
+	return &WorkloadIter{
 		Workloads: workloads,
+		index:     0,
 	}
 }
 

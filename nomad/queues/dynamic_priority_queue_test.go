@@ -550,7 +550,7 @@ func TestDynamicPriorityQueue_Jobs(t *testing.T) {
 		name      string
 		allowedNs map[string]bool
 		workloads []*Workload
-		exp       structs.QueueJobsResponse
+		exp       *WorkloadIter
 	}{
 		{
 			name: "status response parses workloads correctly",
@@ -595,10 +595,9 @@ func TestDynamicPriorityQueue_Jobs(t *testing.T) {
 					usageAdjustment: 1,
 				},
 			},
-			exp: structs.QueueJobsResponse{
-				Type: structs.BatchQueueTypeDynamic,
-				Workloads: []structs.DynamicPriorityWorkload{
-					{
+			exp: &WorkloadIter{
+				Workloads: []structs.QueueWorkload{
+					&structs.DynamicPriorityWorkload{
 						JobID:            "job2",
 						Tenant:           "tenantA",
 						Position:         1,
@@ -608,7 +607,7 @@ func TestDynamicPriorityQueue_Jobs(t *testing.T) {
 						AgeAdjustment:    3,
 						UsageAdjustment:  4,
 					},
-					{
+					&structs.DynamicPriorityWorkload{
 						JobID:            "job1",
 						Tenant:           "tenantA",
 						Position:         2,
@@ -618,7 +617,7 @@ func TestDynamicPriorityQueue_Jobs(t *testing.T) {
 						AgeAdjustment:    3,
 						UsageAdjustment:  4,
 					},
-					{
+					&structs.DynamicPriorityWorkload{
 						JobID:            "job3",
 						Tenant:           "tenantA",
 						Position:         3,
@@ -627,79 +626,6 @@ func TestDynamicPriorityQueue_Jobs(t *testing.T) {
 						SizeAdjustment:   0,
 						AgeAdjustment:    0,
 						UsageAdjustment:  1,
-					},
-				},
-			},
-		},
-		{
-			name:      "status response screens workloads",
-			allowedNs: map[string]bool{"ns1": true},
-			workloads: []*Workload{
-				{
-					id:  "eval1",
-					tid: "tenantA",
-					eval: &structs.Evaluation{
-						ID:        "eval1",
-						JobID:     "job1",
-						Namespace: "ns1",
-						Priority:  50,
-					},
-					priority:        59,
-					sizeAdjustment:  2,
-					ageAdjustment:   3,
-					usageAdjustment: 4,
-				},
-				{
-					id:  "eval2",
-					tid: "tenantB",
-					eval: &structs.Evaluation{
-						ID:        "eval2",
-						JobID:     "job2",
-						Namespace: "ns2",
-						Priority:  50,
-					},
-					priority:        63,
-					sizeAdjustment:  7,
-					ageAdjustment:   1,
-					usageAdjustment: 5,
-				},
-				{
-					id:  "eval2",
-					tid: "tenantA",
-					eval: &structs.Evaluation{
-						ID:        "eval2",
-						JobID:     "job2",
-						Namespace: "ns1",
-						Priority:  50,
-					},
-					priority:        66,
-					sizeAdjustment:  7,
-					ageAdjustment:   1,
-					usageAdjustment: 5,
-				},
-			},
-			exp: structs.QueueJobsResponse{
-				Type: structs.BatchQueueTypeDynamic,
-				Workloads: []structs.DynamicPriorityWorkload{
-					{
-						JobID:            "job2",
-						Tenant:           "tenantA",
-						Position:         1,
-						AdjustedPriority: 66,
-						BasePriority:     50,
-						SizeAdjustment:   7,
-						AgeAdjustment:    1,
-						UsageAdjustment:  5,
-					},
-					{
-						JobID:            "job1",
-						Tenant:           "tenantA",
-						Position:         3,
-						AdjustedPriority: 59,
-						BasePriority:     50,
-						SizeAdjustment:   2,
-						AgeAdjustment:    3,
-						UsageAdjustment:  4,
 					},
 				},
 			},
@@ -738,10 +664,9 @@ func TestDynamicPriorityQueue_Jobs(t *testing.T) {
 					usageAdjustment: 4,
 				},
 			},
-			exp: structs.QueueJobsResponse{
-				Type: structs.BatchQueueTypeDynamic,
-				Workloads: []structs.DynamicPriorityWorkload{
-					{
+			exp: &WorkloadIter{
+				Workloads: []structs.QueueWorkload{
+					&structs.DynamicPriorityWorkload{
 						JobID:            "job2",
 						Tenant:           "tenantA",
 						Position:         1,
@@ -752,7 +677,7 @@ func TestDynamicPriorityQueue_Jobs(t *testing.T) {
 						UsageAdjustment:  4,
 						CreatedAt:        time.Unix(10, 0).UnixNano(),
 					},
-					{
+					&structs.DynamicPriorityWorkload{
 						JobID:            "job1",
 						Tenant:           "tenantA",
 						Position:         2,
@@ -774,7 +699,7 @@ func TestDynamicPriorityQueue_Jobs(t *testing.T) {
 		for _, w := range tc.workloads {
 			testQueue.queue.Push(w)
 		}
-		must.Eq(t, tc.exp, testQueue.Jobs(tc.allowedNs))
+		must.Eq(t, tc.exp, testQueue.Jobs())
 	}
 
 }

@@ -4,7 +4,6 @@
 package nomad
 
 import (
-	"maps"
 	"testing"
 
 	"github.com/hashicorp/nomad/acl"
@@ -14,7 +13,6 @@ import (
 	"github.com/hashicorp/nomad/nomad/structs"
 	"github.com/hashicorp/nomad/testutil"
 	"github.com/shoenig/test/must"
-	tmock "github.com/stretchr/testify/mock"
 )
 
 func TestBatchJobQueue_Jobs(t *testing.T) {
@@ -23,28 +21,65 @@ func TestBatchJobQueue_Jobs(t *testing.T) {
 	t.Cleanup(cleanup)
 	testutil.WaitForLeader(t, s.RPC)
 
-	s.batchJobQueue = new(queues.MockQueue)
-	s.batchJobQueue.(*queues.MockQueue).On("Jobs", tmock.MatchedBy(func(m map[string]bool) bool {
-		return m == nil
-	})).Return(structs.QueueJobsResponse{
-		Type: "test",
-		Workloads: []*structs.Evaluation{
-			{ID: "eval1"},
-			{ID: "eval2"},
+	workload1 := &structs.Evaluation{
+		ID:          "eval1",
+		Namespace:   "ns1",
+		CreateTime:  100,
+		CreateIndex: 100,
+	}
+	workload2 := &structs.Evaluation{
+		ID:          "eval2",
+		Namespace:   "ns1",
+		CreateTime:  200,
+		CreateIndex: 200,
+	}
+	workload3 := &structs.Evaluation{
+		ID:          "eval3",
+		Namespace:   "ns2",
+		CreateTime:  300,
+		CreateIndex: 300,
+	}
+
+	testCases := []struct {
+		name string
+		req  structs.QueueJobsRequest
+		err  string
+		resp structs.QueueJobsResponse
+	}{
+		{
+			name: "list all",
+			req:  structs.QueueJobsRequest{QueryOptions: structs.QueryOptions{Region: "global"}},
+			resp: structs.QueueJobsResponse{Type: "test", Workloads: []structs.QueueWorkload{workload1, workload2, workload3}, QueryMeta: structs.QueryMeta{KnownLeader: true}},
 		},
-	})
+		{
+			name: "paginate per-page=2 page=1",
+			req:  structs.QueueJobsRequest{QueryOptions: structs.QueryOptions{Region: "global", PerPage: 2}},
+			resp: structs.QueueJobsResponse{Type: "test", Workloads: []structs.QueueWorkload{workload1, workload2}, QueryMeta: structs.QueryMeta{KnownLeader: true, NextToken: "300.eval3"}},
+		},
+		{
+			name: "paginate per-page=1 page=3",
+			req:  structs.QueueJobsRequest{QueryOptions: structs.QueryOptions{Region: "global", PerPage: 1, NextToken: "300.eval3"}},
+			resp: structs.QueueJobsResponse{Type: "test", Workloads: []structs.QueueWorkload{workload3}, QueryMeta: structs.QueryMeta{KnownLeader: true, NextToken: ""}},
+		},
+	}
 
-	req := structs.QueueJobsRequest{QueryOptions: structs.QueryOptions{
-		Region: "global",
-	}}
-
-	reply := structs.QueueJobsResponse{}
-
-	err := s.RPC("BatchJobQueue.Jobs", &req, &reply)
-	must.NoError(t, err)
-	s.batchJobQueue.(*queues.MockQueue).AssertExpectations(t)
-	must.Eq(t, reply.Type, "test")
-	must.Len(t, 2, reply.Workloads.([]*structs.Evaluation))
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			s.batchJobQueue = new(queues.MockQueue)
+			s.batchJobQueue.(*queues.MockQueue).On("Jobs").Return(&queues.WorkloadIter{
+				Workloads: []structs.QueueWorkload{workload1, workload2, workload3},
+			})
+			reply := structs.QueueJobsResponse{}
+			err := s.RPC("BatchJobQueue.Jobs", &tc.req, &reply)
+			if tc.err != "" {
+				must.ErrorContains(t, err, tc.err)
+				return
+			}
+			must.NoError(t, err)
+			s.batchJobQueue.(*queues.MockQueue).AssertExpectations(t)
+			must.Eq(t, tc.resp, reply)
+		})
+	}
 }
 
 func TestBatchJobQueue_Jobs_WithACL(t *testing.T) {
@@ -58,12 +93,24 @@ func TestBatchJobQueue_Jobs_WithACL(t *testing.T) {
 	err := state.UpsertNamespaces(1001, []*structs.Namespace{{Name: "ns1"}, {Name: "ns2"}})
 	must.NoError(t, err)
 
+	workload1 := &structs.Evaluation{
+		ID:        "eval1",
+		Namespace: "ns1",
+	}
+	workload2 := &structs.Evaluation{
+		ID:        "eval2",
+		Namespace: "ns1",
+	}
+	workload3 := &structs.Evaluation{
+		ID:        "eval3",
+		Namespace: "ns2",
+	}
+
 	testCases := []struct {
-		name                      string
-		req                       structs.QueueJobsRequest
-		err                       string
-		expectedAllowedNamespaces map[string]bool
-		resp                      structs.QueueJobsResponse
+		name string
+		req  structs.QueueJobsRequest
+		err  string
+		resp structs.QueueJobsResponse
 	}{
 		{
 			name: "no token",
@@ -72,31 +119,32 @@ func TestBatchJobQueue_Jobs_WithACL(t *testing.T) {
 			resp: structs.QueueJobsResponse{},
 		},
 		{
-			name:                      "management token",
-			req:                       structs.QueueJobsRequest{QueryOptions: structs.QueryOptions{Region: "global", AuthToken: root.SecretID}},
-			expectedAllowedNamespaces: nil,
-			resp:                      structs.QueueJobsResponse{Workloads: []*structs.Evaluation{{ID: "eval1"}, {ID: "eval2"}}, QueryMeta: structs.QueryMeta{KnownLeader: true}},
+			name: "management token",
+			req:  structs.QueueJobsRequest{QueryOptions: structs.QueryOptions{Region: "global", AuthToken: root.SecretID}},
+			resp: structs.QueueJobsResponse{Type: "test", Workloads: []structs.QueueWorkload{workload1, workload3, workload2}, QueryMeta: structs.QueryMeta{KnownLeader: true}},
 		},
 		{
-			name:                      "valid token without permissions for jobs on queue",
-			req:                       structs.QueueJobsRequest{QueryOptions: structs.QueryOptions{Region: "global", AuthToken: mock.CreatePolicyAndToken(t, state, 1003, "test-valid", mock.NamespacePolicy(structs.DefaultNamespace, "", []string{acl.NamespaceCapabilityListJobs})).SecretID}},
-			expectedAllowedNamespaces: map[string]bool{"default": true},
-			resp:                      structs.QueueJobsResponse{Workloads: make([]*structs.Evaluation, 0), QueryMeta: structs.QueryMeta{KnownLeader: true}},
+			name: "valid token without permissions for jobs on queue",
+			req:  structs.QueueJobsRequest{QueryOptions: structs.QueryOptions{Region: "global", AuthToken: mock.CreatePolicyAndToken(t, state, 1003, "test-valid", mock.NamespacePolicy(structs.DefaultNamespace, "", []string{acl.NamespaceCapabilityListJobs})).SecretID}},
+			resp: structs.QueueJobsResponse{Type: "test", Workloads: make([]structs.QueueWorkload, 0), QueryMeta: structs.QueryMeta{KnownLeader: true}},
 		},
 		{
-			name:                      "valid token with permissions for one namespace",
-			req:                       structs.QueueJobsRequest{QueryOptions: structs.QueryOptions{Region: "global", AuthToken: mock.CreatePolicyAndToken(t, state, 1005, "test-valid-ns1", mock.NamespacePolicy("ns1", "", []string{acl.NamespaceCapabilityListJobs})).SecretID, Namespace: "ns1"}},
-			expectedAllowedNamespaces: map[string]bool{"ns1": true},
-			resp:                      structs.QueueJobsResponse{Workloads: []*structs.Evaluation{{ID: "eval1"}}, QueryMeta: structs.QueryMeta{KnownLeader: true}},
+			name: "valid token with permissions for one namespace",
+			req:  structs.QueueJobsRequest{QueryOptions: structs.QueryOptions{Region: "global", AuthToken: mock.CreatePolicyAndToken(t, state, 1005, "test-valid-ns1", mock.NamespacePolicy("ns2", "", []string{acl.NamespaceCapabilityListJobs})).SecretID, Namespace: "ns2"}},
+			resp: structs.QueueJobsResponse{Type: "test", Workloads: []structs.QueueWorkload{workload3}, QueryMeta: structs.QueryMeta{KnownLeader: true}},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			s1.batchJobQueue = new(queues.MockQueue)
-			s1.batchJobQueue.(*queues.MockQueue).On("Jobs", tmock.MatchedBy(func(m map[string]bool) bool {
-				return maps.Equal(tc.expectedAllowedNamespaces, m)
-			}), tmock.Anything).Return(tc.resp)
+			s1.batchJobQueue.(*queues.MockQueue).On("Jobs").Return(&queues.WorkloadIter{
+				Workloads: []structs.QueueWorkload{
+					workload1,
+					workload3,
+					workload2,
+				},
+			})
 
 			resp := structs.QueueJobsResponse{}
 			err = s1.RPC("BatchJobQueue.Jobs", &tc.req, &resp)
