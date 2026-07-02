@@ -55,7 +55,7 @@ func (q *BatchJobQueue) Jobs(args *structs.QueueJobsRequest, reply *structs.Queu
 		return err
 	}
 
-	iter := q.srv.batchJobQueue.Jobs()
+	iter := q.srv.batchJobQueue.Jobs(args.Sort)
 
 	selector := func(workload structs.QueueWorkload) bool {
 		if len(allowableNamespaces) == 0 {
