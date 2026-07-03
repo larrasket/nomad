@@ -23,3 +23,6 @@ type Queue interface {
 type Broker interface {
 	Enqueue(*structs.Evaluation)
 }
+
+type Workload interface {
+}

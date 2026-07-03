@@ -42,7 +42,7 @@ type DynamicPriorityQueue struct {
 
 	// enqueueCh is used to buffer workloads before they
 	// are processed by the manager and pushed onto the queue
-	enqueueCh chan *Workload
+	enqueueCh chan *dynamicPriorityWorkload
 
 	// totalUsage is the sum of all tenant usages
 	totalUsage *ResourceUsage
@@ -70,7 +70,7 @@ type DynamicPriorityQueue struct {
 
 type Tenant struct {
 	tid                TenantID
-	placedWorkloadById map[string]*Workload
+	placedWorkloadById map[string]*dynamicPriorityWorkload
 	totalUsage         *ResourceUsage
 }
 
@@ -87,7 +87,7 @@ type UsageList struct {
 	start     time.Time
 }
 
-type Workload struct {
+type dynamicPriorityWorkload struct {
 	// id uniquely identifies this workload
 	// and is set to the evaluation ID.
 	id string
@@ -111,10 +111,9 @@ type Workload struct {
 }
 
 func NewDynamicPriorityQueue(broker Broker, qconf *structs.BatchQueue, conf *structs.DynamicQueueConfig, logger hclog.Logger) *DynamicPriorityQueue {
-	return &DynamicPriorityQueue{
+	d := &DynamicPriorityQueue{
 		tenants:     make(map[TenantID]*Tenant),
-		queue:       NewWorkloadQueue(),
-		enqueueCh:   make(chan *Workload, 8192),
+		enqueueCh:   make(chan *dynamicPriorityWorkload, 8192),
 		evalBroker:  broker,
 		qMux:        sync.Mutex{},
 		qNotify:     make(chan struct{}, 1),
@@ -124,6 +123,8 @@ func NewDynamicPriorityQueue(broker Broker, qconf *structs.BatchQueue, conf *str
 		logger:      logger.Named("Dynamic Priority Queue"),
 		totalUsage:  &ResourceUsage{},
 	}
+	d.queue = NewWorkloadQueue(d.workloadSortFn())
+	return d
 }
 
 func (d *DynamicPriorityQueue) Type() structs.BatchQueueType {
@@ -135,6 +136,35 @@ func (d *DynamicPriorityQueue) Start(ctx context.Context) error {
 	go d.runConsumer(ctx)
 
 	return nil
+}
+
+func (d *DynamicPriorityQueue) workloadSortFn() func(i, j Workload) int {
+	return func(i, j Workload) int {
+		a := i.(*dynamicPriorityWorkload)
+		b := j.(*dynamicPriorityWorkload)
+		// A workload needs to be able to compare with
+		// itself and return 0
+		if a.waitOnRestore && b.waitOnRestore {
+			return 0
+		} else if a.waitOnRestore {
+			return -1
+		} else if b.waitOnRestore {
+			return 1
+		}
+
+		if a.priority > b.priority {
+			return -1
+		} else if a.priority < b.priority {
+			return 1
+		}
+
+		if a.eval.CreateIndex < b.eval.CreateIndex {
+			return -1
+		} else if a.eval.CreateIndex > b.eval.CreateIndex {
+			return 1
+		}
+		return 0
+	}
 }
 
 // SetEnabled is called during leadership transfer and initiates a state restore
@@ -292,8 +322,10 @@ func (d *DynamicPriorityQueue) runConsumer(ctx context.Context) {
 
 			// Pop a workload off the queue if available
 			d.qMux.Lock()
-			workload := d.queue.Pop()
+			w := d.queue.Pop()
 			d.qMux.Unlock()
+
+			workload := w.(*dynamicPriorityWorkload)
 
 			// We don't need to pass the waitOnRestore workload
 			// to the eval broker, that already happened.
@@ -324,7 +356,7 @@ func (d *DynamicPriorityQueue) runConsumer(ctx context.Context) {
 }
 
 // generateWorkload is used to create an initial workload from a given evaluation
-func (d *DynamicPriorityQueue) generateWorkload(e *structs.Evaluation) *Workload {
+func (d *DynamicPriorityQueue) generateWorkload(e *structs.Evaluation) *dynamicPriorityWorkload {
 	job, err := d.state.JobByID(nil, e.Namespace, e.JobID)
 	if err != nil {
 		return nil
@@ -355,7 +387,7 @@ func (d *DynamicPriorityQueue) generateWorkload(e *structs.Evaluation) *Workload
 		}
 	}
 
-	return &Workload{
+	return &dynamicPriorityWorkload{
 		id:                 e.ID,
 		tid:                tid,
 		priority:           0,
@@ -373,7 +405,7 @@ func (d *DynamicPriorityQueue) ensureTenant(tid TenantID) {
 
 	d.tenants[tid] = &Tenant{
 		tid:                tid,
-		placedWorkloadById: make(map[string]*Workload),
+		placedWorkloadById: make(map[string]*dynamicPriorityWorkload),
 		totalUsage:         &ResourceUsage{},
 	}
 }
@@ -393,13 +425,14 @@ func (d *DynamicPriorityQueue) calculatePriorities(now time.Time) {
 
 	// Now that we have accurate tenant usage, calculate
 	// each workloads new priority and update the queue
-	d.queue.UpdateAll(func(w *Workload) {
-		d.setWorkloadPriority(now, w)
+	d.queue.UpdateAll(func(w Workload) {
+		workload := w.(*dynamicPriorityWorkload)
+		d.setWorkloadPriority(now, workload)
 	})
 }
 
 // setWorkloadPriority calculates an individual workload's priority based on
-func (d *DynamicPriorityQueue) setWorkloadPriority(now time.Time, w *Workload) {
+func (d *DynamicPriorityQueue) setWorkloadPriority(now time.Time, w *dynamicPriorityWorkload) {
 	w.priority = w.eval.Priority +
 		d.usageAdjustment(w) +
 		d.ageAdjustment(now, w) +
@@ -408,7 +441,7 @@ func (d *DynamicPriorityQueue) setWorkloadPriority(now time.Time, w *Workload) {
 
 // usageAdjustment calculates the adjustment to a workload's priority based on
 // it's tenant's usage relative to the total usage, and configured weight.
-func (d *DynamicPriorityQueue) usageAdjustment(w *Workload) int {
+func (d *DynamicPriorityQueue) usageAdjustment(w *dynamicPriorityWorkload) int {
 	if d.conf.UsageWeight == 0 {
 		return 0
 	}
@@ -434,7 +467,7 @@ func (d *DynamicPriorityQueue) decayUsage(now time.Time, state *state.StateSnaps
 	totalUsage := &ResourceUsage{}
 
 	for _, tenant := range d.tenants {
-		newWorkloadUsageByID := make(map[string]*Workload)
+		newWorkloadUsageByID := make(map[string]*dynamicPriorityWorkload)
 		tenantTotalUsage := &ResourceUsage{}
 
 		for evalId, workload := range tenant.placedWorkloadById {
@@ -479,7 +512,7 @@ func (d *DynamicPriorityQueue) decayWorkloadUsage(now time.Time, usage *UsageLis
 	}
 }
 
-func (d *DynamicPriorityQueue) ageAdjustment(now time.Time, w *Workload) int {
+func (d *DynamicPriorityQueue) ageAdjustment(now time.Time, w *dynamicPriorityWorkload) int {
 	if d.conf.AgeWeight == 0 {
 		return 0
 	}
@@ -493,7 +526,7 @@ func (d *DynamicPriorityQueue) ageAdjustment(now time.Time, w *Workload) int {
 	return w.ageAdjustment
 }
 
-func (d *DynamicPriorityQueue) sizeAdjustment(w *Workload) int {
+func (d *DynamicPriorityQueue) sizeAdjustment(w *dynamicPriorityWorkload) int {
 	if d.conf.SizeWeight == 0 {
 		return 0
 	}
@@ -511,7 +544,7 @@ func (d *DynamicPriorityQueue) sizeAdjustment(w *Workload) int {
 // Note: If a job with an unsatisfiable contraint is given to the Eval Broker, this function will block
 // until a Nomad operator manually intervenes and stops the job. In the future, we can add an optional
 // configurable timeout for this blocking query.
-func (d *DynamicPriorityQueue) waitForPlacement(ctx context.Context, workload *Workload, ws memdb.WatchSet) error {
+func (d *DynamicPriorityQueue) waitForPlacement(ctx context.Context, workload *dynamicPriorityWorkload, ws memdb.WatchSet) error {
 	eval := workload.eval
 	for !eval.TerminalStatus() || eval.BlockedEval != "" || eval.NextEval != "" {
 		id := eval.ID
@@ -570,7 +603,7 @@ func (d *DynamicPriorityQueue) waitForPlacement(ctx context.Context, workload *W
 // evaluation's BlockedEvals and NextEvals.
 // Similar to waitForPlacement, isSchedulingComplete will record usage in the event an
 // actual placement occurred.
-func (d *DynamicPriorityQueue) isSchedulingComplete(workload *Workload) (bool, error) {
+func (d *DynamicPriorityQueue) isSchedulingComplete(workload *dynamicPriorityWorkload) (bool, error) {
 	snap, err := d.state.Snapshot()
 	if err != nil {
 		return false, err
@@ -621,7 +654,8 @@ func (d *DynamicPriorityQueue) Jobs(sortOrder structs.SortOrder) *WorkloadIter {
 	defer d.qMux.Unlock()
 
 	workloads := []structs.QueueWorkload{}
-	for pos, w := range sortedWorkloads {
+	for pos, workload := range sortedWorkloads {
+		w := workload.(*dynamicPriorityWorkload)
 		workloads = append(workloads, &structs.DynamicPriorityWorkload{
 			JobID:            w.eval.JobID,
 			Tenant:           string(w.tid),
@@ -665,7 +699,7 @@ func (d *DynamicPriorityQueue) Tenants() structs.QueueTenantsResponse {
 }
 
 // updateUsage updates the tenant and total usage for a given workload.
-func (d *DynamicPriorityQueue) updateUsage(workload *Workload) {
+func (d *DynamicPriorityQueue) updateUsage(workload *dynamicPriorityWorkload) {
 	tenant := d.tenants[workload.tid]
 
 	_, ok := tenant.placedWorkloadById[workload.id]
