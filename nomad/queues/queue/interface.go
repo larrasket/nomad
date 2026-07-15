@@ -1,7 +1,7 @@
 // Copyright IBM Corp. 2015, 2026
 // SPDX-License-Identifier: BUSL-1.1
 
-package queues
+package queue
 
 import (
 	"context"
@@ -25,4 +25,7 @@ type Broker interface {
 }
 
 type Workload interface {
+	GetEval() *structs.Evaluation
+	SetEval(*structs.Evaluation)
+	WaitOnRestore() bool
 }

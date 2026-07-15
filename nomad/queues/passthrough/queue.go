@@ -1,40 +1,43 @@
 // Copyright IBM Corp. 2015, 2026
 // SPDX-License-Identifier: BUSL-1.1
 
-package queues
+package passthrough
 
 import (
 	"context"
 
+	"github.com/hashicorp/nomad/nomad/queues/queue"
 	"github.com/hashicorp/nomad/nomad/state"
 	"github.com/hashicorp/nomad/nomad/structs"
 )
 
 type PassthroughQueue struct {
-	broker Broker
+	// evalBroker is the injected broker for passing an evaluation
+	// on to be scheduled by Nomad
+	evalBroker queue.Broker
 }
 
-func NewPassthroughQueue(b Broker) *PassthroughQueue {
+func NewPassthroughQueue(b queue.Broker) *PassthroughQueue {
 	return &PassthroughQueue{
-		broker: b,
+		evalBroker: b,
 	}
 }
 
 func (p *PassthroughQueue) Type() structs.BatchQueueType {
-	return "unset"
+	return structs.BatchQueueTypePassthrough
 }
 
 // Start is a noop for the passthrough implementation
 func (p *PassthroughQueue) Start(context.Context) error { return nil }
 
-func (p *PassthroughQueue) Enqueue(e *structs.Evaluation) { p.broker.Enqueue(e) }
+func (p *PassthroughQueue) Enqueue(e *structs.Evaluation) { p.evalBroker.Enqueue(e) }
 
 func (p *PassthroughQueue) SetEnabled(bool, *state.StateStore) {}
 
-func (p *PassthroughQueue) Jobs(structs.SortOrder) *WorkloadIter {
-	return &WorkloadIter{}
+func (p *PassthroughQueue) Jobs(structs.SortOrder) *queue.WorkloadIter {
+	return &queue.WorkloadIter{}
 }
 
 func (p *PassthroughQueue) Tenants() structs.QueueTenantsResponse {
-	return structs.QueueTenantsResponse{Type: "unset"}
+	return structs.QueueTenantsResponse{Type: structs.BatchQueueTypePassthrough}
 }
