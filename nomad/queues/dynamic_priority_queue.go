@@ -639,7 +639,7 @@ func (d *DynamicPriorityQueue) Jobs(sortOrder structs.SortOrder) *WorkloadIter {
 	iter := NewWorkloadIter(workloads)
 
 	if sortOrder != structs.SortByPriority {
-		iter.SortByCreateIndex()
+		iter.SortByJobId()
 	}
 
 	return iter
