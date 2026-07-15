@@ -48,6 +48,7 @@ import (
 	"github.com/hashicorp/nomad/nomad/lock"
 	"github.com/hashicorp/nomad/nomad/peers"
 	"github.com/hashicorp/nomad/nomad/queues"
+	"github.com/hashicorp/nomad/nomad/queues/queue"
 	"github.com/hashicorp/nomad/nomad/reporting"
 	"github.com/hashicorp/nomad/nomad/state"
 	"github.com/hashicorp/nomad/nomad/structs"
@@ -217,7 +218,7 @@ type Server struct {
 
 	// batchJobQueue is the interface for enqueuing job
 	// register evaluations on a queue implementation
-	batchJobQueue queues.Queue
+	batchJobQueue queue.Queue
 
 	// brokerLock is used to synchronise the alteration of the blockedEvals and
 	// evalBroker enabled state. These two subsystems change state when

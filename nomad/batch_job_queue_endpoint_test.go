@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/nomad/ci"
 	"github.com/hashicorp/nomad/nomad/mock"
 	"github.com/hashicorp/nomad/nomad/queues"
+	"github.com/hashicorp/nomad/nomad/queues/queue"
 	"github.com/hashicorp/nomad/nomad/structs"
 	"github.com/hashicorp/nomad/testutil"
 	"github.com/shoenig/test/must"
@@ -67,7 +68,7 @@ func TestBatchJobQueue_Jobs(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			s.batchJobQueue = new(queues.MockQueue)
-			s.batchJobQueue.(*queues.MockQueue).On("Jobs", tmock.Anything).Return(&queues.WorkloadIter{
+			s.batchJobQueue.(*queues.MockQueue).On("Jobs", tmock.Anything).Return(&queue.WorkloadIter{
 				Workloads: []structs.QueueWorkload{workload1, workload2, workload3},
 			})
 			reply := structs.QueueJobsResponse{}
@@ -139,7 +140,7 @@ func TestBatchJobQueue_Jobs_WithACL(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			s1.batchJobQueue = new(queues.MockQueue)
-			s1.batchJobQueue.(*queues.MockQueue).On("Jobs", tmock.Anything).Return(&queues.WorkloadIter{
+			s1.batchJobQueue.(*queues.MockQueue).On("Jobs", tmock.Anything).Return(&queue.WorkloadIter{
 				Workloads: []structs.QueueWorkload{
 					workload1,
 					workload3,
