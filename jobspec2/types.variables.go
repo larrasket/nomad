@@ -61,6 +61,13 @@ type Variable struct {
 	// declaration, the type of the default variable will be used. This will
 	// allow to ensure that users set this variable correctly.
 	Type cty.Type
+	// Defaults holds the default values for optional object attributes present
+	// in the variable's type constraint (via the optional() modifier). It is
+	// applied to collected values before they are converted to Type so that
+	// omitted optional attributes take their declared default or null,
+	// mirroring Terraform's optional() semantics. It is nil when the type
+	// constraint contains no optional attributes.
+	Defaults *typeexpr.Defaults
 	// Common name of the variable
 	Name string
 	// Description of the variable
@@ -289,13 +296,14 @@ func (variables *Variables) decodeVariableBlock(block *hcl.Block, ectx *hcl.Eval
 	}
 
 	if t, ok := content.Attributes["type"]; ok {
-		tp, moreDiags := typeexpr.Type(t.Expr)
+		tp, defaults, moreDiags := typeexpr.TypeConstraintWithDefaults(t.Expr)
 		diags = append(diags, moreDiags...)
 		if moreDiags.HasErrors() {
 			return diags
 		}
 
 		v.Type = tp
+		v.Defaults = defaults
 	}
 
 	if def, ok := content.Attributes["default"]; ok {
@@ -307,6 +315,9 @@ func (variables *Variables) decodeVariableBlock(block *hcl.Block, ectx *hcl.Eval
 
 		if v.Type != cty.NilType {
 			var err error
+			if v.Defaults != nil {
+				defaultValue = v.Defaults.Apply(defaultValue)
+			}
 			defaultValue, err = convert.Convert(defaultValue, v.Type)
 			if err != nil {
 				diags = append(diags, &hcl.Diagnostic{
@@ -531,6 +542,9 @@ func (c *jobConfig) collectInputVariableValues(env []string, files []*hcl.File, 
 		diags = append(diags, valDiags...)
 		if variable.Type != cty.NilType {
 			var err error
+			if variable.Defaults != nil {
+				val = variable.Defaults.Apply(val)
+			}
 			val, err = convert.Convert(val, variable.Type)
 			if err != nil {
 				diags = append(diags, &hcl.Diagnostic{
@@ -620,6 +634,9 @@ func (c *jobConfig) collectInputVariableValues(env []string, files []*hcl.File, 
 
 			if variable.Type != cty.NilType {
 				var err error
+				if variable.Defaults != nil {
+					val = variable.Defaults.Apply(val)
+				}
 				val, err = convert.Convert(val, variable.Type)
 				if err != nil {
 					diags = append(diags, &hcl.Diagnostic{
@@ -668,6 +685,9 @@ func (c *jobConfig) collectInputVariableValues(env []string, files []*hcl.File, 
 
 		if variable.Type != cty.NilType {
 			var err error
+			if variable.Defaults != nil {
+				val = variable.Defaults.Apply(val)
+			}
 			val, err = convert.Convert(val, variable.Type)
 			if err != nil {
 				diags = append(diags, &hcl.Diagnostic{

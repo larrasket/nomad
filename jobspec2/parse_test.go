@@ -155,6 +155,64 @@ job "example" {
 	})
 }
 
+// TestParse_VariableTypeWithOptionalObjectAttrs asserts that a variable whose
+// type constraint uses optional() object attributes is accepted, and that a
+// value which omits the optional attribute decodes with that attribute set to
+// its default (or null when no default is given), mirroring Terraform's
+// optional() semantics.
+func TestParse_VariableTypeWithOptionalObjectAttrs(t *testing.T) {
+	t.Parallel()
+
+	hcl := `
+variable "obj" {
+  type = object({
+    a = string
+    b = optional(number)
+    c = optional(string, "from-default")
+  })
+  default = {
+    a = "hello"
+  }
+}
+
+job "example" {
+  region = "global"
+  meta {
+    a    = "${var.obj.a}"
+    b_is = "${var.obj.b == null ? "null" : "set"}"
+    c    = "${var.obj.c}"
+  }
+}
+`
+
+	t.Run("optional attribute omitted uses default/null", func(t *testing.T) {
+		out, err := ParseWithConfig(&ParseConfig{
+			Path:    "input.hcl",
+			Body:    []byte(hcl),
+			AllowFS: true,
+		})
+		require.NoError(t, err)
+
+		require.Equal(t, "hello", out.Meta["a"])
+		require.Equal(t, "null", out.Meta["b_is"])
+		require.Equal(t, "from-default", out.Meta["c"])
+	})
+
+	t.Run("optional attribute provided via -var overrides default", func(t *testing.T) {
+		out, err := ParseWithConfig(&ParseConfig{
+			Path:    "input.hcl",
+			Body:    []byte(hcl),
+			ArgVars: []string{`obj={a = "world", b = 7, c = "override"}`},
+			AllowFS: true,
+		})
+		require.NoError(t, err)
+
+		require.Equal(t, "world", out.Meta["a"])
+		require.Equal(t, "set", out.Meta["b_is"])
+		require.Equal(t, "override", out.Meta["c"])
+	})
+}
+
 // TestParse_UnknownVariables asserts that unknown variables are left intact for further processing
 func TestParse_UnknownVariables(t *testing.T) {
 	t.Parallel()

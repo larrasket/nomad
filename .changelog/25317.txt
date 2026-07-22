@@ -1,0 +1,3 @@
+```release-note:improvement
+jobspec: Added support for the `optional()` modifier in object type attributes of HCL2 variable type constraints
+```
