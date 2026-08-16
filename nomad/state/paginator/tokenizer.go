@@ -28,7 +28,29 @@ func NamespaceIDTokenizer[T namespaceIDGetter](target string) Tokenizer[T] {
 		// `a-b` and job `c` into the same token `a-b-c`, since `-` is an allowed
 		// character in namespace.
 		token := fmt.Sprintf("%s.%s", ns, id)
-		return token, cmp.Compare(token, target)
+
+		// Split the target to extract the namespace and ID values. Comparing
+		// the joined token as a single string would let the "." separator
+		// participate in ordering, which disagrees with the memdb
+		// (Namespace, ID) compound index: when one namespace is a prefix of
+		// another that continues with a byte lower than "." (e.g. "team" vs
+		// "team-a"), the whole-string compare flips sign and cross-namespace
+		// pagination duplicates or omits items. Namespace names cannot contain
+		// ".", so the first "." separates the namespace from the ID (which may
+		// itself contain ".").
+		targetParts := strings.SplitN(target, ".", 2)
+		// If the target wasn't composed of both parts, directly compare.
+		if len(targetParts) < 2 {
+			return token, cmp.Compare(token, target)
+		}
+
+		// Compare the namespace first, then the ID as a tiebreaker, mirroring
+		// the memdb compound-index ordering.
+		nsCmp := cmp.Compare(ns, targetParts[0])
+		if nsCmp != 0 {
+			return token, nsCmp
+		}
+		return token, cmp.Compare(id, targetParts[1])
 	}
 }
 

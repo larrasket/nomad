@@ -143,3 +143,96 @@ func (m *mockCreateIndexObject) GetCreateIndex() uint64 {
 func (m *mockCreateIndexObject) GetID() string {
 	return m.id
 }
+
+func TestNamespaceIDTokenizer(t *testing.T) {
+	ci.Parallel(t)
+
+	cases := []struct {
+		name          string
+		obj           *mockNamespaceIDObject
+		target        string
+		expectedToken string
+		expectedCmp   int
+	}{
+		{
+			// Regression for hashicorp/nomad#28211: the separator "." must not
+			// participate in ordering. Namespace "team" is a prefix of "team-a"
+			// which continues with "-" (0x2D < "." 0x2E), so comparing the
+			// joined token "team.j4" against "team-a.j1" as one string wrongly
+			// returns +1. Comparing namespace first yields -1, matching the
+			// memdb (Namespace, ID) compound index order.
+			name:          "prefix namespace ordering (less)",
+			obj:           newMockNamespaceIDObject("team", "j4"),
+			target:        "team-a.j1",
+			expectedToken: "team.j4",
+			expectedCmp:   -1,
+		},
+		{
+			// Symmetric counterpart: "team-a" sorts after "team".
+			name:          "prefix namespace ordering (greater)",
+			obj:           newMockNamespaceIDObject("team-a", "j1"),
+			target:        "team.j9",
+			expectedToken: "team-a.j1",
+			expectedCmp:   1,
+		},
+		{
+			name:          "common namespace id (less)",
+			obj:           newMockNamespaceIDObject("team", "j1"),
+			target:        "team.j2",
+			expectedToken: "team.j1",
+			expectedCmp:   -1,
+		},
+		{
+			name:          "common namespace id (greater)",
+			obj:           newMockNamespaceIDObject("team", "j1"),
+			target:        "team.j0",
+			expectedToken: "team.j1",
+			expectedCmp:   1,
+		},
+		{
+			name:          "common namespace id (equal)",
+			obj:           newMockNamespaceIDObject("team", "j1"),
+			target:        "team.j1",
+			expectedToken: "team.j1",
+			expectedCmp:   0,
+		},
+		{
+			// An ID may itself contain ".", so only the first "." separates
+			// namespace from ID.
+			name:          "id containing separator",
+			obj:           newMockNamespaceIDObject("team", "j1.a"),
+			target:        "team.j1.a",
+			expectedToken: "team.j1.a",
+			expectedCmp:   0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fn := NamespaceIDTokenizer[*mockNamespaceIDObject](tc.target)
+			actualToken, actualCmp := fn(tc.obj)
+			must.Eq(t, tc.expectedToken, actualToken)
+			must.Eq(t, tc.expectedCmp, actualCmp)
+		})
+	}
+}
+
+func newMockNamespaceIDObject(namespace, id string) *mockNamespaceIDObject {
+	return &mockNamespaceIDObject{
+		namespace: namespace,
+		id:        id,
+	}
+}
+
+type mockNamespaceIDObject struct {
+	namespace string
+	id        string
+}
+
+func (m *mockNamespaceIDObject) GetNamespace() string {
+	return m.namespace
+}
+
+func (m *mockNamespaceIDObject) GetID() string {
+	return m.id
+}

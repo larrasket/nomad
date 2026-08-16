@@ -1,0 +1,3 @@
+```release-note:bug
+api: Fixed a bug where paginating list endpoints across namespaces could return duplicate or missing results when one namespace name was a prefix of another
+```
